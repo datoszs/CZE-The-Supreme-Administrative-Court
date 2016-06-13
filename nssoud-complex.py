@@ -7,95 +7,76 @@ from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 from datetime import datetime
 from optparse import OptionParser
+from collections import OrderedDict
+from tqdm import tqdm
 import math
 import io
 import os
 import re
 import sys
 import codecs
-import collections
 import time
 import csv
 import json
-import requests
-
-
 import logging
 
 base_url = "http://nssoud.cz/"
 url = "http://nssoud.cz/main0Col.aspx?cls=JudikaturaBasicSearch&pageSource=0"
-path ="screens"
+hash_id = datetime.now().strftime("%d-%m-%Y")
+screens_dir ="screens_"+hash_id
 documents_dir = "PDF"
 txt_dir = "TXT"
+html_dir = "HTML"
 
-out_dir = ""
-ooutput_file = ""
-date_from = ""
-date_to = ""
-days = 0
+main_timeout = 10000
+saved_pages = 0
 
 b_screens = False # capture screenshots?
 # precompile regex
 p_re_records = re.compile(r'(\d+)$')
 p_re_decisions = re.compile(r'[a-z<>]{4}\s+(.+)\s+')
 
-# settings of logging
-logger = logging.getLogger(__file__)
-logger.setLevel(logging.DEBUG)
-fh = logging.FileHandler(__file__+"_log.txt",mode="w",encoding='utf-8')
-fh.setLevel(logging.DEBUG)
-# create console handler
-ch = logging.StreamHandler()
-ch.setLevel(logging.INFO)
-# create formatter and add it to the handlers
-formatter = logging.Formatter('%(asctime)s - %(funcName)-15s - %(levelname)-8s: %(message)s')
-ch.setFormatter(formatter)
-fh.setFormatter(formatter)
-# add the handlers to logger
-logger.addHandler(ch)
-logger.addHandler(fh)
+def set_logging():
+	# settings of logging
+	global logger
+	logger = logging.getLogger(__file__)
+	logger.setLevel(logging.DEBUG)
+	fh_d = logging.FileHandler(os.path.join(out_dir,__file__[0:-3]+"_"+hash_id+"_log_debug.txt"),mode="w",encoding='utf-8')
+	fh_d.setLevel(logging.DEBUG)
+	fh_i = logging.FileHandler(os.path.join(out_dir,__file__[0:-3]+"_"+hash_id+"_log.txt"),mode="w",encoding='utf-8')
+	fh_i.setLevel(logging.INFO)
+	# create console handler
+	ch = logging.StreamHandler()
+	ch.setLevel(logging.INFO)
+	# create formatter and add it to the handlers
+	formatter = logging.Formatter(u'%(asctime)s - %(funcName)-15s - %(levelname)-8s: %(message)s')
+	ch.setFormatter(formatter)
+	fh_d.setFormatter(formatter)
+	fh_i.setFormatter(formatter)
+	# add the handlers to logger
+	logger.addHandler(ch)
+	logger.addHandler(fh_d)
+	logger.addHandler(fh_i)
 
 def parameters():
 	usage = "usage: %prog [options]"
 	parser = OptionParser(usage)
 	parser.add_option("-l","--last-days",action="store",type="int", dest="interval",default=None,help="number of days to checking")
 	parser.add_option("-d","--output-directory",action="store",type="string", dest="dir",default="output_data",help="Path to output directory")
-	parser.add_option("-f","--date-from",action="store",type="string", dest="date_from",default=None,help="Start date of range ")
-	parser.add_option("-t","--date-to",action="store",type="string", dest="date_to",default=None,help="End date of range")
+	parser.add_option("-f","--date-from",action="store",type="string", dest="date_from",default=None,help="Start date of range (d. m. yyyy)")
+	parser.add_option("-t","--date-to",action="store",type="string", dest="date_to",default=None,help="End date of range (d. m. yyyy)")
 	parser.add_option("-c","--capture",action="store_true",dest="screens",default=False,help="Capture screenshots?")
-	parser.add_option("-o","--output-file",action="store",type="string",dest="filename",default="data",help="Name of output CSV file")
+	parser.add_option("-o","--output-file",action="store",type="string",dest="filename",default="nss_csv",help="Name of output CSV file")
+	parser.add_option("-e","--extraction",action="store_true",dest="extraction",default=False,help="Make only extraction without download new data")
 	(options, args) = parser.parse_args()
 	options = vars(options)
 
 	print(args,options,type(options))
 	return options
 
-def ocr_space_url(url, overlay=False, api_key='helloworld', language='ce'):
-		""" OCR.space API request with remote file.
-				Python3.5 - not tested on 2.7
-		:param url: Image url.
-		:param overlay: Is OCR.space overlay required in your response.
-										Defaults to False.
-		:param api_key: OCR.space API key.
-										Defaults to 'helloworld'.
-		:param language: Language code to be used in OCR.
-										List of available language codes can be found on https://ocr.space/OCRAPI
-										Defaults to 'en'.
-		:return: Result in JSON format.
-		"""
-
-		payload = {
-			'url': url,
-			'isOverlayRequired': overlay,
-			'apikey': api_key,
-			'language': language,
-		}
-		logger.debug("Waiting for response...")
-		r = requests.post(
-			'https://api.ocr.space/parse/image',
-			data=payload
-		)
-		return r.content.decode() # off topic
+def make_soup(path):
+	soup = BeautifulSoup(codecs.open(path,encoding="utf-8"),"html.parser")
+	return soup
 
 def how_many(str_info,displayed_records):
 	"""
@@ -129,25 +110,39 @@ def first_page():
 	"""
 
 	session.click("#_ctl0_ContentPlaceMasterPage__ctl0_pnPaging1_Repeater2__ctl0_Linkbutton2")
-	session.wait_for(page_has_loaded,"Timeout - go to first page",timeout = 1000)
+	session.wait_for(page_has_loaded,"Timeout - go to first page",timeout = main_timeout)
 
-def check_decisions(decisions):
-	# //TODO
-	if "Rozsudek" in decisions[0]:
-		if decisions[1] in []:
-			return True
-	elif "Usnesení" in decisions[0]:
-		if decisions[1] in []:
-			return True
-	return False
+def extract_data(response,html_file):
+	"""
+		save current page as HTML file for later extraction
+	"""
+	logger.debug("Save file '%s'" % html_file)
+	with codecs.open(os.path.join(html_dir_path,html_file),"w",encoding="utf-8") as f:
+		f.write(response)
 
-def extract_data(rows):
+def make_record(soup):
 	"""
 	extract relevant data from page
-	@param rows - list of row elements
 	"""
+	table = soup.find("table",id="_ctl0_ContentPlaceMasterPage__ctl0_grwA")
+	rows = table.findAll("tr")
+	logger.debug("Records on pages: %d" % len(rows[1:]))
+
 	for record in rows[1:]:
 		columns = record.findAll("td") # columns of table in the row
+
+		case_number= columns[1].getText().replace("\n",'').strip()
+		# extract decision results
+		decisions_str = str(columns[2]).replace("\n",'').strip()
+		m = p_re_decisions.search(decisions_str)
+		line= m.group(1)
+		decision_result = [x.replace('\"','\'').strip() for x in line.split("<br>")]
+		if len(decision_result) > 1:
+			decisions = {'1':decision_result[0],'2':decision_result[1]}
+		else:
+			decisions = {'1':decision_result[0]}
+		decision_result = json.dumps(decisions,sort_keys = True,ensure_ascii = False)
+
 		link_elem = columns[1].select_one('a[href*=SOUDNI_VYKON]')
 		link = None
 		# link to the decision's document
@@ -155,17 +150,9 @@ def extract_data(rows):
 			link = link_elem['href']
 			link = urljoin(base_url,link)
 		else:
+			writer_links.writerow({"case_number":case_number, "link":link, "decision_result" : decision_result})# write list of links for next processing
 			continue # case without document
 
-		# extract decision results
-		decisions_str = str(columns[2]).replace("\n",'').strip()
-		m = p_re_decisions.search(decisions_str)
-		line= m.group(1)
-		decision_result = [x.replace('\"','\'').strip() for x in line.split("<br>")]
-		# TODO: check decisions
-		decisions = {'1':decision_result[0],'2':decision_result[1]}
-		decision_result = json.dumps(decisions,sort_keys = True,ensure_ascii = False)
-		case_number= columns[1].getText().replace("\n",'').strip()
 		mark = case_number.split("-")[0].strip() # registry mark isn't case number
 		
 		court = columns[3].getText().replace("\n",'').strip()
@@ -187,9 +174,43 @@ def extract_data(rows):
 			"decision_result" : decision_result,
 			"case_number" : case_number
 		}
-		# //TODO: increment counter of all records
+		
 		writer_records.writerow(item) # write item to CSV
-		writer_links.writerow({"case_number":case_number, "link":link})# write list of links for next processing
+		logger.debug(case_number)
+		writer_links.writerow({"case_number":case_number, "link":link, "decision_result" : decision_result})# write list of links for next processing
+
+def extract_information(extract=None):
+	"""
+		extract informations from HTML files and write to CSVs
+	"""
+	html_files = [os.path.join(html_dir_path,fn) for fn in next(os.walk(html_dir_path))[2]]
+	if extract is True:
+		saved_pages = len(html_files)
+	if len(html_files) == saved_pages:
+		global writer_links
+		global writer_records
+
+		fieldnames= ['court_name','registry_mark','decision_date','web_path','local_path', 'decision_result','case_number']
+		csv_records = open(os.path.join(out_dir,output_file),'w',newline='',encoding="utf-8")
+		csv_links = open(os.path.join(out_dir,"links_"+output_file),'w',newline='',encoding="utf-8")
+
+		writer_records = csv.DictWriter(csv_records,fieldnames=fieldnames,delimiter=";")
+		writer_links = csv.DictWriter(csv_links,fieldnames=["case_number","link","decision_result"],delimiter=";")
+		writer_links.writeheader()
+		writer_records.writeheader()
+
+		t = tqdm(html_files)
+		for html_f in t:
+			logger.debug(html_f)
+			make_record(make_soup(html_f))
+			t.update()
+			#print(i)
+			"""i += 1
+			if i==80:
+				break"""
+
+		csv_records.close()
+		csv_links.close()
 
 def view_data(mark_type,value,days=None,date_from=None,date_to=None):
 	"""
@@ -201,12 +222,13 @@ def view_data(mark_type,value,days=None,date_from=None,date_to=None):
 	@param date_to - end date of range
 
 	"""
-	if date_from is not None and date_to is not None:
+	if date_from is not None :
 		# setting range search
 		logger.info("Records from the period %s -> %s",date_from,date_to)
 		# id = _ctl0_ContentPlaceMasterPage__ctl0_txtDatumOd
 		if session.exists("#_ctl0_ContentPlaceMasterPage__ctl0_txtDatumOd"):
 			session.set_field_value("#_ctl0_ContentPlaceMasterPage__ctl0_txtDatumOd",date_from)
+	if date_to is not None:
 		# id = _ctl0_ContentPlaceMasterPage__ctl0_txtDatumDo
 		if session.exists("#_ctl0_ContentPlaceMasterPage__ctl0_txtDatumDo"):
 			session.set_field_value("#_ctl0_ContentPlaceMasterPage__ctl0_txtDatumDo",date_to)
@@ -227,16 +249,20 @@ def view_data(mark_type,value,days=None,date_from=None,date_to=None):
 		logger.debug("Change mark type - %s",mark_type)
 		session.set_field_value("#_ctl0_ContentPlaceMasterPage__ctl0_ddlRejstrik",value)
 		#time.sleep(1)
+	if session.exists("#_ctl0_ContentPlaceMasterPage__ctl0_ddlSortName"):
+		session.set_field_value("#_ctl0_ContentPlaceMasterPage__ctl0_ddlSortName","2")
+		session.set_field_value("#_ctl0_ContentPlaceMasterPage__ctl0_ddlSortDirection","0")
+
 	if session.exists("#_ctl0_ContentPlaceMasterPage__ctl0_btnFind"): # click on find button
 		logger.debug("Click - find")
-		session.click("#_ctl0_ContentPlaceMasterPage__ctl0_btnFind")
+		session.click("#_ctl0_ContentPlaceMasterPage__ctl0_btnFind",expect_loading = True)
 		#result, resources = session.wait_for_selector("#_ctl0_ContentPlaceMasterPage__ctl0_grwA")
 		#time.sleep(10)
-		session.wait_for(page_has_loaded,"Timeout - find",timeout=5000)
+		#session.wait_for(page_has_loaded,"Timeout - find",timeout=main_timeout)
 		
 		if b_screens:
 			logger.debug("\t_find_screen_"+mark_type+".png")
-			session.capture_to(path+"/_find_screen_"+mark_type+".png")
+			session.capture_to(screens_dir_path+"/_find_screen_"+mark_type+".png")
 	# change value of row count on page
 	if session.exists("#_ctl0_ContentPlaceMasterPage__ctl0_ddlRowCount"): 
 		value, resources = session.evaluate("document.getElementById('_ctl0_ContentPlaceMasterPage__ctl0_ddlRowCount').value")
@@ -248,86 +274,74 @@ def view_data(mark_type,value,days=None,date_from=None,date_to=None):
 			#button = br.find_element_by_name("_ctl0:ContentPlaceMasterPage:_ctl0:btnChangeCount")
 			if session.exists("#_ctl0_ContentPlaceMasterPage__ctl0_btnChangeCount"):
 				logger.debug("Click - Change")
-				result, resources = session.click("#_ctl0_ContentPlaceMasterPage__ctl0_btnChangeCount")
+				result, resources = session.click("#_ctl0_ContentPlaceMasterPage__ctl0_btnChangeCount",expect_loading = True)
 				#result, resources = session.wait_for_selector("#_ctl0_ContentPlaceMasterPage__ctl0_grwA")
 				#time.sleep(10)
-				session.wait_for(page_has_loaded,"Timeout - Change",timeout=5000)
+				#session.wait_for(page_has_loaded,"Timeout - Change",timeout=main_timeout)
 
 				if b_screens:
 					logger.debug("\tfind_screen_"+mark_type+"_change_row_count.png")
-					session.capture_to(path+"/_find_screen_"+mark_type+"_change_row_count.png")
+					session.capture_to(screens_dir+"/_find_screen_"+mark_type+"_change_row_count.png")
 
-def walk_pages(count_of_pages):
+def walk_pages(count_of_pages,case_type):
 	"""
 	make a walk through pages of results
 	@param count_of_pages - over how many pages we have to go
 	"""
 	logger.debug("count_of_pages: %d",count_of_pages)
-	for i in range(1,count_of_pages+1): # walk pages
+	positions = [0,1,2,3,4,5,6,7,8,9,10]
+	t = tqdm(range(1,count_of_pages+1))
+	for i in t: # walk pages
 		response = session.content
-		soup = BeautifulSoup(response,"html.parser")
-		table = soup.find("table",id="_ctl0_ContentPlaceMasterPage__ctl0_grwA")
-
-		if table is None: # has page table with records?
-			logger.error("There is not table")
+		#soup = BeautifulSoup(response,"html.parser")
+		html_file = str(i)+"_"+case_type+".html"
+		if not os.path.exists(os.path.join(html_dir_path,html_file)):
+			if session.exists("#_ctl0_ContentPlaceMasterPage__ctl0_grwA"):
+				extract_data(response,html_file)
 		else:
-			rows = table.findAll("tr") # record on the page
-
-			if i >= 12:
-				logger.debug("(%d) - %d < 10 --> %s",(count_of_pages ),(i),(count_of_pages) - i < 10)
-				# special compute for last pages
-				if (count_of_pages) - (i+1) < 10:
-					positions = [0,1,2,3,4,5,6,7,8,9,10]
-					logger.debug("%d",positions[(i-(count_of_pages))])
-					page_number = str(positions[(i-(count_of_pages))]+12)
-				else:
-					page_number = "12" # next page element has constant ID
+			logger.debug("Skip file '%s'" % html_file)
+		
+		if i >= 12:
+			logger.debug("(%d) - %d < 10 --> %s <== (count_of_pages ) - (i) < 10 = Boolean",(count_of_pages ),(i),(count_of_pages) - i < 10)
+			# special compute for last pages
+			if (count_of_pages) - (i+1) < 10:
+				logger.debug("%d",positions[(i-(count_of_pages))])
+				page_number = str(positions[(i-(count_of_pages))]+12)
 			else:
-				page_number = str(i+1) # few first pages
+				page_number = "12" # next page element has constant ID
+		else:
+			page_number = str(i+1) # few first pages
 
-			logger.debug("Number = %s",page_number)
-	
-			if b_screens:
-				session.capture_to(path+"/find_screen_0"+str(i)+".png",None,selector="#pagingBox0")
+		logger.debug("Number = %s",page_number)
 
-			extract_data(rows)
+		if b_screens:
+			session.capture_to(screens_dir_path+"/find_screen_"+case_type+"_0"+str(i)+".png",None,selector="#pagingBox0")
 
-			#logger.info("(%d) Zpracováno %s záznamů z %s",i,number_of_records,celkem) # info o prubehu
-			if session.exists("#_ctl0_ContentPlaceMasterPage__ctl0_pnPaging1_Repeater2__ctl"+page_number+"_LinkButton1") and i+1 < (count_of_pages + 1):
-				link_id = "_ctl0_ContentPlaceMasterPage__ctl0_pnPaging1_Repeater2__ctl"+page_number+"_LinkButton1"
-				logger.debug("\tClick - Page %d (%s)",(i+1),link_id)
-				try:
-					result, resources = session.click("#"+link_id)
-					session.wait_for(page_has_loaded,"Timeout - walk_pages",timeout = 1000)	
-				except Exception:
-					logger.error("Error (walk_pages) - close browser", exc_info=True)
-					logger.debug("error_("+str(i+1)+").png")
-					session.capture_to(path+"/error_("+str(i+1)+").png")
-					return False
+		if session.exists("#_ctl0_ContentPlaceMasterPage__ctl0_pnPaging1_Repeater2__ctl"+page_number+"_LinkButton1") and i+1 < (count_of_pages + 1):
+			link_id = "_ctl0_ContentPlaceMasterPage__ctl0_pnPaging1_Repeater2__ctl"+page_number+"_LinkButton1"
+			logger.debug("\tClick - Page %d (%s)",(i+1),link_id)
+			t.update()
+			try:
+				result, resources = session.click("#"+link_id, expect_loading=True)
+				#session.evaluate("WebForm_DoPostBackWithOptions(new WebForm_PostBackOptions(\"%s\", \"\", true, \"\", \"\", false, true))" % link_id)
+				#session.wait_for(page_has_loaded,"Timeout - next page",timeout=main_timeout)
+				logger.debug("New page was loaded!")	
+			except Exception:
+				logger.error("Error (walk_pages) - close browser", exc_info=True)
+				logger.debug("error_("+str(i+1)+").png")
+				session.capture_to(screens_dir+"/error_("+str(i+1)+").png")
+				return False
 	return True
 
 def process_court():
 	"""
 	creates files for processing and saving data, start point for processing
 	"""
-	case_types = {"As" : '12', "Ads" : '10', "Afs": '11', "Ars": '116', "Azs": '9'}
-	fieldnames= ['court_name','registry_mark','decision_date','web_path','local_path', 'decision_result','case_number']
+	d = {"As" : '12', "Ads" : '10', "Afs": '11', "Ars": '116', "Azs": '9'}
+	case_types = OrderedDict(sorted(d.items(), key=lambda t: t[0]))
 	row_count = 30
-
-	global writer_links
-	global writer_records
-	global list_of_links
-
-	list_of_links = {}
-
-	csv_records = open(os.path.join(out_dir,output_file),'w',newline='')
-	csv_links = open(out_dir+"/list_of_links.csv",'w',newline='')
-
-	writer_records = csv.DictWriter(csv_records,fieldnames=fieldnames,delimiter=";")
-	writer_links = csv.DictWriter(csv_links,fieldnames=["case_number","link"],delimiter=";")
-	writer_links.writeheader()
-	writer_records.writeheader()
-
+	global saved_pages
+	saved_pages = 0
 	for case_type in case_types.keys():
 		logger.info("-----------------------------------------------------")
 		logger.info(case_type)
@@ -342,7 +356,7 @@ def process_court():
 			logger.error("Failed to display data")
 			if b_screens:
 				logger.debug("error_"+case_type+".png")
-				session.capture_to(path+"/error_"+case_type+".png")
+				session.capture_to(screens_dir_path+"/error_"+case_type+".png")
 			return False
 		#my_result = session.exists("#_ctl0_ContentPlaceMasterPage__ctl0_pnPaging1_Repeater3__ctl0_Label2")
 		#print (my_result)
@@ -362,39 +376,44 @@ def process_court():
 
 		#testovani
 		#if count_of_pages >=5:
-		#	count_of_pages = 2
+		#	count_of_pages = 5
 
-		result = walk_pages(count_of_pages)
+		result = walk_pages(count_of_pages,case_type)
+		saved_pages += count_of_pages
 		if result == False:
 			logger.warning("Result of 'walk_pages' is False")
 			csv_records.close()
 			csv_links.close()
 			return False
 		first_page()
-	csv_records.close()
-	csv_links.close()
 	return True
 
 def main():
 	global ghost
 	ghost = Ghost()
 	global session
-	session = ghost.start(download_images=False,show_scrollbars=False)
-	logger.info("Opening browser")
+	session = ghost.start(download_images=False, show_scrollbars=False, wait_timeout=5000,display=False,plugins_enabled=False)
+	logger.info(u"Start - NSS")
 	session.open(url)
 
 	if b_screens:
 		logger.debug("_screen.png")
-		session.capture_to(path+"/_screen.png")
-
+		session.capture_to(screens_dir_path+"/_screen.png")
+	logger.info("Download data")
 	result = process_court()
 	#print(result)
 	if result == True:
-		logger.info("Closing browser")
+		logger.info("DONE - download")
+		logger.debug("Closing browser")
+		#session.exit()
+		logger.info("Extract informations")
+		extract_information()
+		logger.info("DONE - extraction")
 	else:
 		logger.error("Error (main)- closing browser")
-	session.exit()
-	ghost.exit()
+		return False
+	
+	return True
 
 if __name__ == "__main__":
 	options = parameters()
@@ -408,24 +427,29 @@ if __name__ == "__main__":
 		output_file += ".csv"
 	txt_dir_path = os.path.join(out_dir,txt_dir)
 	documents_dir_path = os.path.join(out_dir,documents_dir)
+	html_dir_path = os.path.join(out_dir,html_dir)
 
 	if not os.path.exists(out_dir):
 		os.mkdir(out_dir)
 		print("Folder was created '"+out_dir+"'")
-	if not os.path.exists(txt_dir_path):
-		os.mkdir(txt_dir_path)
-		print("Folder was created '"+txt_dir_path+"'")
-	else:
-		print("Folder"+"'"+txt_dir_path+"' "+"now exists")
-	if not os.path.exists(documents_dir_path):
-		os.mkdir(documents_dir_path)
-		print("Folder was created '"+documents_dir_path+"'")
-	else:
-		print("Folder"+"'"+documents_dir_path+"' "+"now exists")
+	for directory in [documents_dir_path, html_dir_path, txt_dir_path]:
+		if not os.path.exists(directory):
+			os.mkdir(directory)
+			print("Folder was created '"+directory+"'")
+	set_logging()
 	if b_screens:
-		if not os.path.exists(path):
-			os.mkdir(path)
-			print("Folder was created '"+path+"'")
-		logger.debug("Erasing old scree")
-		os.system("erase /Q "+path)
-	main()
+		screens_dir_path = os.path.join(out_dir,screens_dir)
+		if not os.path.exists(screens_dir_path):
+			os.mkdir(screens_dir_path)
+			print("Folder was created '"+screens_dir_path+"'")
+		logger.debug("Erasing old screens")
+		os.system("rm "+os.path.join(screens_dir_path,"*"))
+	if options["extraction"]:
+		logger.info("Only extract informations")
+		extract_information(extract=True)
+		logger.info("DONE - extraction")
+	else:	
+		if main():
+			sys.exit(42)
+		else:
+			sys.exit(-1)
