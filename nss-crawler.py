@@ -84,7 +84,7 @@ def create_directories():
 	for directory in [out_dir, documents_dir_path, html_dir_path, result_dir_path]:
 		os.makedirs(directory,exist_ok=True)
 		logger.info("Folder was created '"+directory+"'")
-	
+
 	if b_screens:
 		screens_dir_path = join(out_dir,screens_dir)
 		if not os.path.exists(screens_dir_path):
@@ -110,6 +110,7 @@ def parameters():
 	usage = "usage: %prog [options]"
 	parser = OptionParser(usage)
 	parser.add_option("-w","--without-download",action="store_true", dest="download",default=False,help="Not download PDF documents")
+	parser.add_option("-n","--not-delete",action="store_true", dest="delete",default=False,help="Not delete working directory")
 	parser.add_option("-d","--output-directory",action="store",type="string", dest="dir",default="output_dir",help="Path to output directory")
 	parser.add_option("-f","--date-from",action="store",type="string", dest="date_from",default=None,help="Start date of range (d. m. yyyy)")
 	parser.add_option("-t","--date-to",action="store",type="string", dest="date_to",default=None,help="End date of range (d. m. yyyy)")
@@ -193,9 +194,9 @@ def make_record(soup):
 			continue # case without document"""
 
 		mark = case_number.split("-")[0].strip() # registry mark isn't case number
-		
+
 		court = columns[3].getText().replace("\n",'').strip()
-		
+
 		str_date = columns[4].getText().replace("\n",'').strip()
 		date = [x.strip() for x in str_date.split("/ ")]
 		if len(date) >= 1:
@@ -206,7 +207,7 @@ def make_record(soup):
 		filename = ""
 		if link is not None:
 			filename = os.path.basename(link)
-	
+
 		item = {
 			"registry_mark" : mark,
 			"decision_date" : date,
@@ -217,7 +218,7 @@ def make_record(soup):
 			"decision_result" : decision_result,
 			"case_number" : case_number
 		}
-		
+
 		writer_records.writerow(item) # write item to CSV
 		logger.debug(case_number)
 		writer_links.writerow({"case_number":case_number, "link":link, "decision_result" : decision_result})# write list of links for next processing
@@ -289,12 +290,12 @@ def view_data(row_count, mark_type, value, date_from=None, date_to=None):
 	if session.exists("#_ctl0_ContentPlaceMasterPage__ctl0_btnFind"): # click on find button
 		logger.debug("Click - find")
 		session.click("#_ctl0_ContentPlaceMasterPage__ctl0_btnFind", expect_loading=True)
-		
+
 		if b_screens:
 			logger.debug("\t_find_screen_"+mark_type+".png")
 			session.capture_to(join(screens_dir_path,"_find_screen_"+mark_type+".png"))
 	# change value of row count on page
-	if session.exists("#_ctl0_ContentPlaceMasterPage__ctl0_ddlRowCount"): 
+	if session.exists("#_ctl0_ContentPlaceMasterPage__ctl0_ddlRowCount"):
 		value, resources = session.evaluate("document.getElementById('_ctl0_ContentPlaceMasterPage__ctl0_ddlRowCount').value")
 		#print("value != '30'",value != "30")
 		if value != "30":
@@ -307,7 +308,7 @@ def view_data(row_count, mark_type, value, date_from=None, date_to=None):
 				if b_screens:
 					logger.debug("\tfind_screen_"+mark_type+"_change_row_count.png")
 					session.capture_to(join(screens_dir_path,"/_find_screen_"+mark_type+"_change_row_count.png"))
-#-----------------------------------------------------------------------
+# -----------------------------------------------------------------------
 def walk_pages(count_of_pages, case_type):
 	"""
 	make a walk through pages of results
@@ -331,9 +332,9 @@ def walk_pages(count_of_pages, case_type):
 				pass
 		else:
 			logger.debug("Skip file '%s'" % html_file)
-		
+
 		## TO DO - danger
-		if i >= 12 and count_of_pages > 22: 
+		if i >= 12 and count_of_pages > 22:
 			logger.debug("(%d) - %d < 10 --> %s <== (count_of_pages ) - (i) < 10 = Boolean",(count_of_pages ),(i),(count_of_pages) - i < 10)
 			# special compute for last pages
 			if (count_of_pages) - (i+1) < 10:
@@ -355,9 +356,9 @@ def walk_pages(count_of_pages, case_type):
 			logger.debug("\tGo to next - Page %d (%s)",(i+1),link)
 			try:
 				#result, resources = session.click("#"+link_id, expect_loading=True)
-				session.evaluate("WebForm_DoPostBackWithOptions(new WebForm_PostBackOptions(\"%s\", \"\", true, \"\", \"\", false, true))" % link,expect_loading=True)
+				session.evaluate("WebForm_DoPostBackWithOptions(new WebForm_PostBackOptions(\"%s\", \"\", true, \"\", \"\", false, true))" % link, expect_loading=True)
 				#session.wait_for(page_has_loaded,"Timeout - next page",timeout=main_timeout)
-				logger.debug("New page was loaded!")	
+				logger.debug("New page was loaded!")
 			except Exception:
 				logger.error("Error (walk_pages) - close browser", exc_info=True)
 				logger.debug("error_("+str(i+1)+").png")
@@ -396,7 +397,7 @@ def process_court():
 			continue
 		info_elem, resources = session.evaluate(
 			"document.getElementById('_ctl0_ContentPlaceMasterPage__ctl0_pnPaging1_Repeater3__ctl0_Label2').innerHTML")
-		
+
 		if info_elem:
 			#number_of_records = "20" #hack pro testovani
 			str_info = info_elem.replace("<b>","").replace("</b>","")
@@ -437,10 +438,6 @@ def download_pdf(data):
 			logging_process(["curl", row[1], "-o",join(documents_dir_path,filename)])
 		t.update()
 #-----------------------------------------------------------------------
-def signal_handler(signal, frame):
-	print('You pressed Ctrl+C!')
-	sys.exit(-1)
-#-----------------------------------------------------------------------
 def main():
 	global ghost
 	ghost = Ghost()
@@ -477,18 +474,17 @@ def main():
 	else:
 		logger.error("Error (main)- closing browser")
 		return False
-	
+
 	return True
 
 if __name__ == "__main__":
-	signal.signal(signal.SIGINT, signal_handler)
-	#signal.pause()
 	options = parameters()
 	out_dir = options["dir"]
 	b_download = options["download"]
 	date_from = options["date_from"]
 	date_to = options["date_to"]
 	b_screens = options["screens"]
+	b_delete = options["delete"]
 	output_file = options["filename"]
 
 	if ".csv" not in output_file:
@@ -513,15 +509,16 @@ if __name__ == "__main__":
 		logger.info("Only extract informations")
 		extract_information(saved_pages,extract=True)
 		logger.info("DONE - extraction")
-	else:	
+	else:
 		if main():
 			# move results of crawling
 			if not os.listdir(result_dir_path):
 				logger.info("Moving files")
 				shutil.move(documents_dir_path,result_dir_path)
 				shutil.move(join(out_dir,output_file),result_dir_path)
-				#logger.debug("I remove working directory")
-				#logging_process(["rm","-rf",out_dir])
+				if not b_delete:
+					logger.debug("I remove working directory")
+					logging_process(["rm","-rf",out_dir])
 			else:
 				logger.error("Result directory isn't empty.")
 				sys.exit(-1)
