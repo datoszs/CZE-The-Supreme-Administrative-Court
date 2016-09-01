@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+﻿#!/usr/bin/env python
 # -*- encoding: utf-8 -*-
 # coding=utf-8
 
@@ -37,7 +37,7 @@ base_url = "http://nssoud.cz/"
 url = "http://nssoud.cz/main0Col.aspx?cls=JudikaturaBasicSearch&pageSource=0"
 hash_id = datetime.now().strftime("%d-%m-%Y")
 working_dir = "working"
-screens_dir ="screens_"+hash_id
+screens_dir ="screens_" + hash_id
 documents_dir = "documents"
 txt_dir = "txt"
 html_dir = "html"
