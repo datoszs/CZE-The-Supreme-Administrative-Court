@@ -76,11 +76,8 @@ def set_logging():
     logger.addHandler(fh_i)
 
 
-#-----------------------------------------------------------------------
 def create_directories():
-    """
-create working directories
-"""
+    """create working directories"""
     for directory in [out_dir, documents_dir_path, html_dir_path, result_dir_path]:
         os.makedirs(directory, exist_ok=True)
         logger.info("Folder was created '" + directory + "'")
@@ -92,15 +89,12 @@ create working directories
             logger.info("Folder was created '" + screens_dir_path + "'")
         else:
             logger.debug("Erasing old screens")
-            os.system("rm " + join(screens_dir_path, "*"))
+            shutil.rmtree(screens_dir_path)
         return screens_dir_path
 
 
-#-----------------------------------------------------------------------
 def logging_process(arguments):
-    """
-settings logging for subprocess
-"""
+    """settings logging for subprocess"""
     p = subprocess.Popen(arguments, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     stdout, stderr = p.communicate()
     if stdout:
@@ -109,7 +103,6 @@ settings logging for subprocess
         logger.debug("%s" % stderr)
 
 
-#-----------------------------------------------------------------------
 def parameters():
     usage = "usage: %prog [options]"
     parser = OptionParser(usage)
@@ -136,19 +129,16 @@ def parameters():
     return options
 
 
-#-----------------------------------------------------------------------
 def make_soup(path):
     soup = BeautifulSoup(codecs.open(path, encoding="utf-8"), "html.parser")
     return soup
 
 
-#-----------------------------------------------------------------------
 def how_many(str_info, displayed_records):
+    """find number of records and compute count of pages
+    :str_info: info element as string
+    :displayed_records: number of displayed records
     """
-find number of records and compute count of pages
-:str_info: info element as string
-:displayed_records: number of displayed records
-"""
     m = p_re_records.search(str_info)
     number_of_records = m.group(1)
     count_of_pages = math.ceil(int(number_of_records) / int(displayed_records))
@@ -156,32 +146,25 @@ find number of records and compute count of pages
     return number_of_records, count_of_pages
 
 
-#-----------------------------------------------------------------------
 def first_page():
-    """
-go to first page on find query
-"""
+    """go to first page on find query"""
     session.click("#_ctl0_ContentPlaceMasterPage__ctl0_pnPaging1_Repeater2__ctl0_Linkbutton2", expect_loading=True)
 
 
-#-----------------------------------------------------------------------
 def extract_data(response, html_file):
+    """save current page as HTML file for later extraction
+    :response: HTML code for saving
+    :html_file: name of saving file
     """
-save current page as HTML file for later extraction
-:response: HTML code for saving
-:html_file: name of saving file
-"""
     logger.debug("Save file '%s'" % html_file)
     with codecs.open(join(html_dir_path, html_file), "w", encoding="utf-8") as f:
         f.write(response)
 
 
-#-----------------------------------------------------------------------
 def make_record(soup):
+    """extract relevant data from page
+    :soup: bs4 soup object
     """
-extract relevant data from page
-:soup: bs4 soup object
-"""
     table = soup.find("table", id="_ctl0_ContentPlaceMasterPage__ctl0_grwA")
     rows = table.findAll("tr")
     logger.debug("Records on pages: %d" % len(rows[1:]))
@@ -247,14 +230,11 @@ extract relevant data from page
                                "decision_result": decision_result})  # write list of links for next processing
 
 
-#-----------------------------------------------------------------------
-# noinspection PyGlobalUndefined,PyGlobalUndefined
 def extract_information(saved_pages, extract=None):
+    """extract informations from HTML files and write to CSVs
+    :saved_pages: number of all saved pages
+    :extract: boolean flag which indicates type of extraction
     """
-extract informations from HTML files and write to CSVs
-:saved_pages: number of all saved pages
-:extract: boolean flag which indicates type of extraction
-"""
     html_files = [join(html_dir_path, fn) for fn in next(os.walk(html_dir_path))[2]]
     if len(html_files) == saved_pages or extract:
         global writer_links
@@ -286,15 +266,13 @@ extract informations from HTML files and write to CSVs
         logger.warning("len(html_files) == saved_pages = %s" % len(html_files) == saved_pages)
 
 
-#-----------------------------------------------------------------------
 def view_data(row_count, mark_type, value, date_from=None, date_to=None):
+    """sets forms parameters for viewing data
+    :mark_type: text identificator of mark type
+    :value: mark type number identificator for formular
+    :date_from: start date of range
+    :date_to: end date of range
     """
-sets forms parameters for viewing data
-:mark_type: text identificator of mark type
-:value: mark type number identificator for formular
-:date_from: start date of range
-:date_to: end date of range
-"""
     if date_from is not None:
         # setting range search
         logger.info("Records from the period %s -> %s", date_from, date_to)
@@ -340,13 +318,11 @@ sets forms parameters for viewing data
                     session.capture_to(join(screens_dir_path, "/_find_screen_" + mark_type + "_change_row_count.png"))
 
 
-# -----------------------------------------------------------------------
 def walk_pages(count_of_pages, case_type):
+    """make a walk through pages of results
+    :count_of_pages: over how many pages we have to go
+    :case_type: name of type for easier identification of problem
     """
-make a walk through pages of results
-:count_of_pages: over how many pages we have to go
-:case_type: name of type for easier identification of problem
-"""
     last_file = str(count_of_pages) + "_" + case_type + ".html"
     if os.path.exists(join(html_dir_path, last_file)):
         logger.debug("Skip %s type <-- '%s' exists" % (case_type, last_file))
@@ -405,11 +381,8 @@ make a walk through pages of results
     return True
 
 
-#-----------------------------------------------------------------------
 def process_court():
-    """
-creates files for processing and saving data, start point for processing
-"""
+    """creates files for processing and saving data, start point for processing"""
     d = {"Ads": '10', "Afs": '11', "Ars": '116', "As": '12', "Azs": '9'}
     #d = {"As" : '12'}
     case_types = OrderedDict(sorted(d.items(), key=lambda t: t[0]))
@@ -458,22 +431,18 @@ creates files for processing and saving data, start point for processing
     return True
 
 
-#-----------------------------------------------------------------------
 def load_data(csv_file):
+    """load data from csv file
+    :csv_file: name of CSV file
     """
-load data from csv file
-:csv_file: name of CSV file
-"""
     data = pd.read_csv(csv_file, sep=";", na_values=['', "nan"])
     return data
 
 
-#-----------------------------------------------------------------------
 def download_pdf(data):
+    """download PDF files
+    :data: Pandas data frame object
     """
-download PDF files
-:data: Pandas data frame object
-"""
     frame = data[["web_path", "local_path"]].dropna()
     t = tqdm(frame, ncols=global_ncols)
     for row in frame.itertuples():
@@ -483,7 +452,6 @@ download PDF files
         t.update()
 
 
-#-----------------------------------------------------------------------
 def main():
     global ghost
     ghost = Ghost()
@@ -565,7 +533,6 @@ if __name__ == "__main__":
                 shutil.move(join(out_dir, output_file), result_dir_path)
                 if not b_delete:
                     logger.debug("I remove working directory")
-                    #logging_process(["rm", "-rf", out_dir])
                     shutil.rmtree(out_dir)
             else:
                 logger.error("Result directory isn't empty.")

@@ -1,5 +1,4 @@
 beautifulsoup4==4.4.1
-bs4==0.0.1
 Ghost.py==0.2.3
 pandas==0.18.1
 PySide==1.2.4
