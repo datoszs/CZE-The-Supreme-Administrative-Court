@@ -1,5 +1,6 @@
-# CZE-The-Supreme-Administrative-Court
-Crawler of Czech Republic The Supreme Administrative Court
+# The Supreme Administrative Court
+Crawler of Czech Republic The Supreme Administrative Court.
+
 Downloads HTML files, PDF files and produces CSV file with results
 
 
@@ -13,7 +14,8 @@ Downloads HTML files, PDF files and produces CSV file with results
 
 ##Usage
 
-```Usage: nss-crawler.py [options]
+```
+Usage: nss-crawler.py [options]
 
 Options:
   -h, --help            show this help message and exit
@@ -29,4 +31,5 @@ Options:
   -c, --capture         Capture screenshots?
   -o FILENAME, --output-file=FILENAME
                         Name of output CSV file
-  -e, --extraction      Make only extraction without download new data```
+  -e, --extraction      Make only extraction without download new data
+  ```
